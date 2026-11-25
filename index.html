@@ -9,7 +9,16 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.cburnett.css">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=5">
+  <!-- Bump v= on every release so browsers never mix old and new files (GitHub Pages caches for 10 min). -->
+  <script type="importmap">
+  { "imports": {
+      "./app.js": "./app.js?v=5", "./ai.js": "./ai.js?v=5", "./analysis.js": "./analysis.js?v=5",
+      "./board.js": "./board.js?v=5", "./chessutil.js": "./chessutil.js?v=5", "./engine.js": "./engine.js?v=5",
+      "./explain.js": "./explain.js?v=5", "./explorer.js": "./explorer.js?v=5", "./openings.js": "./openings.js?v=5",
+      "./review.js": "./review.js?v=5"
+  } }
+  </script>
 </head>
 <body>
 <header>
@@ -213,6 +222,6 @@
 </main>
 <footer class="muted small">Analysis by Stockfish 18 · Games from the public chess.com API · Pieces: cburnett (lichess) · Runs entirely in your browser</footer>
 
-<script type="module" src="app.js"></script>
+<script type="module">import './app.js';</script>
 </body>
 </html>
