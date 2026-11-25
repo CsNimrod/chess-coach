@@ -11,6 +11,13 @@ python -m http.server 8765
 ```
 Then open http://localhost:8765. It has to be served over HTTP; opening index.html directly as a file won't work. Any static host (such as GitHub Pages) also works.
 
+## Play bots
+Full games against Stockfish bots from about 500 to 3000:
+- **8 ready-made opponents**, each with its own opening (Rosa plays the Italian, Leo the London, Mira the Caro-Kann, Viktor the Najdorf…), or build a custom bot: any rating plus any opening, including your own saved lines.
+- **Behaviour:** bots follow their opening book while you stay in it. Out of book, they play what real players at their rating play (with Lichess connected) or principled engine moves, then Stockfish at their strength for the rest of the game. Weak bots really blunder; strong bots use Stockfish's calibrated strength limit.
+- **Game features:** clocks (bullet to 30 min, with increment), promotion picker, captured pieces and material count, takebacks, draw offers, resign, flip board. Bots resign lost positions.
+- **After the game:** one click opens a full Game Review. Recent games are saved.
+
 ## Game Review
 Click any analyzed game for a full review, similar to chess.com's:
 - **Eval bar** and a clickable **eval graph** with dots on the big moments

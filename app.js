@@ -5,6 +5,7 @@ import { fetchGames, analyzeGame, classifyGame, aggregate, worstMistakes, quickF
 import { askAI, PROVIDERS } from './ai.js';
 import { OPENINGS, lineKey, parseMoves } from './openings.js';
 import { createReview } from './review.js';
+import { createPlay } from './play.js';
 import { lichessToken, connectLichess, finishLichessLogin, disconnectLichess, bandsFor, explore, pickMove } from './explorer.js';
 
 const $ = (id) => document.getElementById(id);
@@ -22,7 +23,10 @@ function showTab(name) {
   document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
   if (name === 'puzzles') puzzles.enter();
+  if (name === 'home') renderHome();
+  document.querySelector('nav button.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
+document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { showTab(b.dataset.go); window.scrollTo(0, 0); }));
 
 // helpers to give a Board legal destinations from a FEN
 const destsFor = (getFen) => (sq) => { try { return new Chess(getFen()).moves({ square: sq, verbose: true }).map((m) => m.to); } catch { return []; } };
@@ -179,6 +183,62 @@ const review = createReview({
   askAI,
   aiSettings: () => ({ provider: settings.provider, key: settings.keys[settings.provider], model: settings.models[settings.provider] }),
 });
+
+// ---------------- toasts ----------------
+function toast(msg, ms = 2600) {
+  const box = $('toasts');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  box.append(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, ms);
+  return t;
+}
+function progressToast() {
+  const box = $('toasts');
+  const t = document.createElement('div');
+  t.className = 'toast progress show';
+  t.innerHTML = '<div class="pt-text"></div><div class="bar"><div class="pt-fill"></div></div>';
+  box.append(t);
+  return {
+    set(text, frac) { t.querySelector('.pt-text').textContent = text; t.querySelector('.pt-fill').style.width = (100 * frac).toFixed(0) + '%'; },
+    done() { t.classList.remove('show'); setTimeout(() => t.remove(), 300); },
+  };
+}
+
+// ---------------- analyze any list of moves into Game Review ----------------
+let reviewEngine = null;
+async function analyzeMoves({ sans, userColor, white, black, opening, family, timeClass, note, key }) {
+  const c = new Chess();
+  const fens = [c.fen()];
+  const moves = sans.map((san) => {
+    const color = c.turn(), moveNo = +c.fen().split(' ')[5];
+    const mv = c.move(san);
+    fens.push(c.fen());
+    return { san: mv.san, uci: mv.from + mv.to + (mv.promotion || ''), color, moveNo, clock: null };
+  });
+  const me = userColor === 'w' ? white : black, opp = userColor === 'w' ? black : white;
+  const game = {
+    url: key || 'practice:' + userColor + ':' + sans.join(' '), practice: true, note,
+    endTime: Date.now() / 1000, timeClass, timeControl: '', base: null,
+    userColor, me, opp, white, black, result: 'draw', opening, family: family || opening, fens, moves,
+  };
+  const pt = progressToast();
+  let done = 0;
+  pt.set('Loading Stockfish…', 0);
+  try {
+    reviewEngine ??= new Engine({ multipv: 2 });
+    await reviewEngine.ready;
+    await analyzeGame(game, reviewEngine, settings.depth, (k) => { done += k; pt.set(`Analyzing with Stockfish… ${done}/${fens.length}`, done / fens.length); }, () => false);
+    classifyGame(game);
+    review.open(game);
+    showTab('review');
+    window.scrollTo(0, 0);
+  } catch (e) {
+    toast('Analysis failed: ' + e.message, 5000);
+  } finally { pt.done(); }
+}
 
 // =====================================================================
 // PUZZLES FROM YOUR MISTAKES
@@ -524,19 +584,8 @@ const drill = (() => {
     $('realAnalyze').onclick = () => analyzeReal(my);
   }
 
-  let reviewEngine = null;
-  async function analyzeReal(game0) {
-    const btn = $('realAnalyze');
-    if (btn) btn.disabled = true;
+  function analyzeReal(game0) {
     const p = realParams();
-    const c = new Chess();
-    const fens = [c.fen()];
-    const moves = game0.hist.map((san) => {
-      const color = c.turn(), moveNo = +c.fen().split(' ')[5];
-      const mv = c.move(san);
-      fens.push(c.fen());
-      return { san: mv.san, uci: mv.from + mv.to + (mv.promotion || ''), color, moveNo, clock: null };
-    });
     const me = { name: settings.username || 'You', rating: +$('realRating').value || '' };
     const opp = { name: `Lichess ${p.label} players`, rating: p.label };
     const moveOf = (ply) => `move ${Math.ceil(ply / 2)}`;
@@ -544,31 +593,12 @@ const drill = (() => {
     if (game0.youLeftAt != null) notes.push(`You left your ${game0.g.name} prep on ${moveOf(game0.youLeftAt)}.`);
     if (game0.outAt != null) notes.push(`Your opponent left your prep on ${moveOf(game0.outAt)}.`);
     if (!notes.length) notes.push('You stayed in your prep the whole way.');
-    const game = {
-      url: 'practice:' + game0.side + ':' + game0.hist.join(' '), practice: true, note: notes.join(' '),
-      endTime: Date.now() / 1000, timeClass: 'practice vs ' + p.label, timeControl: '', base: null,
-      userColor: game0.side, me, opp,
+    analyzeMoves({
+      sans: game0.hist, userColor: game0.side,
       white: game0.side === 'w' ? me : opp, black: game0.side === 'w' ? opp : me,
-      result: 'draw', opening: game0.openingName || game0.g.name, family: game0.g.name, fens, moves,
-    };
-    const total = fens.length;
-    let done = 0;
-    status(`Analyzing with Stockfish… 0/${total}`);
-    try {
-      reviewEngine ??= new Engine({ multipv: 2 });
-      await reviewEngine.ready;
-      await analyzeGame(game, reviewEngine, settings.depth, (k) => { done += k; status(`Analyzing with Stockfish… ${done}/${total}`); }, () => false);
-      classifyGame(game);
-      status('Analysis ready.', 'ok');
-      review.open(game);
-      showTab('review');
-      window.scrollTo(0, 0);
-    } catch (e) {
-      status('Analysis failed: ' + e.message, 'bad');
-      if (btn) btn.disabled = false;
-    }
+      opening: game0.openingName || game0.g.name, family: game0.g.name, timeClass: 'practice vs ' + p.label, note: notes.join(' '),
+    });
   }
-
   $('realRating').value = settings.rating || 1200;
   $('realRating').onchange = () => { settings.rating = +$('realRating').value || 1200; settings.ratingByUser = true; saveSettings(); start(); };
   $('realSpeeds').onchange = () => start();
@@ -641,6 +671,41 @@ const drill = (() => {
   sync();
 })();
 
+// =====================================================================
+// PLAY + HOME
+// =====================================================================
+const play = createPlay({ analyzeMoves, toast, settings, saveSettings });
+
+const homeBoard = new Board($('homeBoard'));
+const HOME_LINE = 'e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+ Bd2 Bxd2+ Nbxd2 d5 exd5 Nxd5 Qb3'.split(' ');
+let homePly = 0, homeTimer = null;
+function homeStep() {
+  if (!$('tab-home').classList.contains('active')) return;
+  const c = new Chess();
+  let last = null;
+  for (let i = 0; i < homePly; i++) last = c.move(HOME_LINE[i]);
+  homeBoard.setPosition(c.fen(), { lastMove: last, sound: false });
+  homePly = homePly >= HOME_LINE.length ? 0 : homePly + 1;
+}
+function renderHome() {
+  clearInterval(homeTimer);
+  homeTimer = setInterval(homeStep, 1400);
+  homeStep();
+  const botGames = load('cc_bot_games', []);
+  const parts = [];
+  if (games.length && stats) {
+    parts.push([games.length, 'games analyzed'], [stats.avgAccuracy.toFixed(1) + '%', 'average accuracy'], [(stats.blunders / stats.games).toFixed(1), 'blunders per game']);
+  }
+  if (botGames.length) {
+    const w = botGames.filter((g) => g.result === 'win').length;
+    parts.push([`${w}/${botGames.length}`, 'bot games won']);
+  }
+  const ps = load('cc_puzzle_score', null);
+  if (ps?.seen) parts.push([`${ps.solved}/${ps.seen}`, 'own mistakes fixed']);
+  $('homeStats').hidden = !parts.length;
+  $('homeStats').innerHTML = parts.map(([v, k]) => `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('');
+}
+
 // coming back from the Lichess login page?
 finishLichessLogin().then((justLoggedIn) => {
   if (justLoggedIn || sessionStorage.getItem('cc_after_login')) {
@@ -662,3 +727,5 @@ if (games.length) {
   const ai = load('cc_last_ai', null);
   if (ai) { $('aiOut').classList.remove('muted'); $('aiOut').innerHTML = md(ai); }
 }
+
+if ($('tab-home').classList.contains('active')) renderHome();

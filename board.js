@@ -107,6 +107,29 @@ export class Board {
     this.justDropped = null;
   }
   setOrientation(o) { this.orientation = o; this.render(); }
+  // Promotion picker over the board. Resolves to 'q' | 'r' | 'b' | 'n', or null if cancelled.
+  askPromotion(to, color) {
+    return new Promise((res) => {
+      const ov = document.createElement('div');
+      ov.className = 'promo';
+      const { col, row } = this._coords(to);
+      const dir = row === 0 ? 1 : -1;
+      ['q', 'n', 'r', 'b'].forEach((t, i) => {
+        const b = document.createElement('div');
+        b.className = 'promo-opt';
+        b.style.left = col * 12.5 + '%';
+        b.style.top = (row + dir * i) * 12.5 + '%';
+        const p = document.createElement('piece');
+        p.className = `${PNAME[t]} ${color === 'w' ? 'white' : 'black'}`;
+        b.append(p);
+        b.addEventListener('pointerdown', (e) => { e.stopPropagation(); ov.remove(); res(t); });
+        ov.append(b);
+      });
+      ov.addEventListener('pointerdown', (e) => { if (e.target === ov) { ov.remove(); res(null); } });
+      ov.addEventListener('contextmenu', (e) => e.preventDefault());
+      this.el.append(ov);
+    });
+  }
   setBadge(b) { this.badge = b; this.render(); }
   setArrows(list) { this.arrows = list || []; this._drawArrows(); }
   mark(sq, cls, ms = 600) {

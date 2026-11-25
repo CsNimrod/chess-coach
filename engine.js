@@ -54,9 +54,22 @@ export class Engine {
       this.send(cmd);
     });
   }
+  // Queue UCI options (e.g. {MultiPV: 5, UCI_LimitStrength: true, UCI_Elo: 1500}).
+  configure(opts) {
+    const job = async () => {
+      await this.ready;
+      for (const [k, v] of Object.entries(opts)) this.send(`setoption name ${k} value ${v}`);
+      this.send('ucinewgame');
+      await this._waitFor('isready', (l) => l === 'readyok');
+    };
+    const p = this.queue.then(job);
+    this.queue = p.catch(() => {});
+    return p;
+  }
   // Returns score from the side-to-move's point of view:
-  // {cp, mate, best, pv, second: {cp, mate, pv} | null}
-  evaluate(fen, { depth = 16, movetime = 2000 } = {}) {
+  // {cp, mate, best, pv, second: {cp, mate, pv} | null, lines: [{cp, mate, pv}, ...]}
+  // Pass depth: null to search by time (movetime) or nodes only.
+  evaluate(fen, { depth = 16, movetime = 2000, nodes = null } = {}) {
     const job = async () => {
       await this.ready;
       return new Promise((res) => {
@@ -72,12 +85,17 @@ export class Engine {
             this.listeners.delete(f);
             const bm = l.split(' ')[1];
             const first = lines[1] || { cp: 0, mate: null, pv: [] };
-            res({ ...first, best: !bm || bm === '(none)' ? null : bm, second: lines[2] || null });
+            const all = Object.keys(lines).sort((a, b) => a - b).map((k) => lines[k]);
+            res({ ...first, best: !bm || bm === '(none)' ? null : bm, second: lines[2] || null, lines: all });
           }
         };
         this.listeners.add(f);
         this.send('position fen ' + fen);
-        this.send(`go depth ${depth} movetime ${movetime}`);
+        const go = ['go'];
+        if (depth) go.push('depth', depth);
+        if (nodes) go.push('nodes', nodes);
+        if (movetime) go.push('movetime', movetime);
+        this.send(go.join(' '));
       });
     };
     const p = this.queue.then(job);

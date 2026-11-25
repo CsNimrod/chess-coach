@@ -9,14 +9,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.cburnett.css">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
   <!-- Bump v= on every release so browsers never mix old and new files (GitHub Pages caches for 10 min). -->
   <script type="importmap">
   { "imports": {
-      "./app.js": "./app.js?v=7", "./ai.js": "./ai.js?v=7", "./analysis.js": "./analysis.js?v=7",
-      "./board.js": "./board.js?v=7", "./chessutil.js": "./chessutil.js?v=7", "./engine.js": "./engine.js?v=7",
-      "./explain.js": "./explain.js?v=7", "./explorer.js": "./explorer.js?v=7", "./openings.js": "./openings.js?v=7",
-      "./review.js": "./review.js?v=7"
+      "./app.js": "./app.js?v=8", "./ai.js": "./ai.js?v=8", "./analysis.js": "./analysis.js?v=8",
+      "./board.js": "./board.js?v=8", "./chessutil.js": "./chessutil.js?v=8", "./engine.js": "./engine.js?v=8",
+      "./explain.js": "./explain.js?v=8", "./explorer.js": "./explorer.js?v=8", "./openings.js": "./openings.js?v=8",
+      "./review.js": "./review.js?v=8", "./play.js": "./play.js?v=8"
   } }
   </script>
 </head>
@@ -24,7 +24,9 @@
 <header>
   <div class="brand"><span class="logo">♞</span> Chess<span>Coach</span></div>
   <nav>
-    <button data-tab="analyze" class="active"><span>📊</span>Analyze</button>
+    <button data-tab="home" class="active"><span>🏠</span>Home</button>
+    <button data-tab="play"><span>♟️</span>Play</button>
+    <button data-tab="analyze"><span>📊</span>Analyze</button>
     <button data-tab="review"><span>🔍</span>Game Review</button>
     <button data-tab="puzzles"><span>🧩</span>My Mistakes</button>
     <button data-tab="openings"><span>📖</span>Openings</button>
@@ -33,8 +35,81 @@
 </header>
 
 <main>
+  <!-- HOME -->
+  <section id="tab-home" class="tab active">
+    <div class="home-hero">
+      <div class="hh-text">
+        <div class="kicker">Free · runs in your browser · Stockfish 18</div>
+        <h1>Get better at chess<br><span class="grad">by fixing what you actually get wrong.</span></h1>
+        <p class="muted">Play bots that use your openings, review every game like a pro, turn your own blunders into puzzles, and drill openings against the moves real players at your rating make.</p>
+        <div class="row">
+          <button class="primary big" data-go="play">♟️ Play a bot</button>
+          <button class="big" data-go="analyze">📊 Analyze my games</button>
+        </div>
+      </div>
+      <div class="hh-art" aria-hidden="true"><div id="homeBoard"></div></div>
+    </div>
+    <div id="homeStats" class="stats" hidden></div>
+    <div class="features">
+      <button class="feature" data-go="play"><span class="f-ico">♟️</span><b>Play bots</b><span>From 500 to 3000. Each one plays its own opening. Full games with clocks.</span></button>
+      <button class="feature" data-go="analyze"><span class="f-ico">📊</span><b>Analyze your games</b><span>Pull your chess.com games and find the mistakes you keep repeating.</span></button>
+      <button class="feature" data-go="review"><span class="f-ico">🔍</span><b>Game Review</b><span>Every move labelled, Brilliant to Blunder, with a coach explaining why.</span></button>
+      <button class="feature" data-go="puzzles"><span class="f-ico">🧩</span><b>Fix your mistakes</b><span>The positions you got wrong become puzzles until you get them right.</span></button>
+      <button class="feature" data-go="openings"><span class="f-ico">📖</span><b>Drill openings</b><span>Learn lines, test yourself, then face what real players at your level play.</span></button>
+      <button class="feature" data-go="settings"><span class="f-ico">✦</span><b>AI coach</b><span>Connect a free AI to turn your stats into a training plan.</span></button>
+    </div>
+  </section>
+
+  <!-- PLAY -->
+  <section id="tab-play" class="tab">
+    <div class="layout play-layout">
+      <div class="playcol">
+        <div class="pbar" id="pbTop"></div>
+        <div id="playBoard"></div>
+        <div class="pbar" id="pbBottom"></div>
+      </div>
+      <div class="side">
+        <div id="playSetup" class="card">
+          <h3>🤖 Choose your opponent</h3>
+          <div id="botGrid" class="botgrid"></div>
+          <div id="botBio" class="info small"></div>
+          <div class="botcfg">
+            <label>Bot rating: <b id="botEloVal"></b><input id="botElo" type="range" min="400" max="3000" step="50"></label>
+            <label>Bot's opening<select id="botOpening"></select></label>
+            <p id="botNote" class="muted small" hidden>Tip: connect Lichess (Openings tab → "vs Real opponents") and "Anything" bots open like real players at their rating. Without it they use Stockfish's own opening choices.</p>
+            <div class="row">
+              <label>You play<select id="playColor"><option value="w">White</option><option value="b">Black</option><option value="r">Random</option></select></label>
+              <label>Time<select id="playTime">
+                <option value="0">No clock</option><option value="60+0">1 min</option><option value="180+2">3 | 2</option>
+                <option value="300+0">5 min</option><option value="600+0">10 min</option><option value="900+10">15 | 10</option><option value="1800+0">30 min</option>
+              </select></label>
+            </div>
+            <label class="check"><input id="playTakebacks" type="checkbox"> Allow takebacks</label>
+          </div>
+          <button id="playStart" class="primary big wide">Play</button>
+          <h4>Recent games</h4>
+          <div id="playHistory"></div>
+        </div>
+        <div id="playGame" class="card" hidden>
+          <div class="botinfo" id="botInfo"></div>
+          <div id="playStatus" class="status"></div>
+          <div id="playOpening" class="muted small"></div>
+          <div id="playMoves" class="rmoves playmoves"></div>
+          <div id="playOver" class="gameover" hidden></div>
+          <div class="ctrls">
+            <button id="pTakeback" title="Take back your last move">↶ Takeback</button>
+            <button id="pDraw" title="Offer a draw">½ Draw</button>
+            <button id="pResign" title="Resign">🏳 Resign</button>
+            <button id="pFlip" title="Flip board">⇅ Flip</button>
+            <button id="pNew" title="Choose another opponent">＋ New</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ANALYZE -->
-  <section id="tab-analyze" class="tab active">
+  <section id="tab-analyze" class="tab">
     <div class="hero card">
       <div class="hero-text">
         <h1>Find the mistakes you keep making.</h1>
@@ -230,6 +305,7 @@
     </div>
   </section>
 </main>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 <footer class="muted small">Analysis by Stockfish 18 · Games from the public chess.com API · Pieces: cburnett (lichess) · Runs entirely in your browser</footer>
 
 <script type="module">import './app.js';</script>
