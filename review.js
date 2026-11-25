@@ -25,7 +25,7 @@ export function createReview({ getEngine, askAI, aiSettings }) {
     const plate = (c) => `<span class="pdot ${c}"></span><b>${esc(g[c].name)}</b> <span class="muted">(${g[c].rating})</span>`;
     $('pTop').innerHTML = plate(top);
     $('pBottom').innerHTML = plate(bot);
-    $('rTitle').innerHTML = `<div class="rt-open">${esc(g.opening)}</div><div class="muted small">${new Date(g.endTime * 1000).toLocaleDateString()} · ${g.timeClass} · <a href="${esc(g.url)}" target="_blank" rel="noopener">chess.com ↗</a></div>`;
+    $('rTitle').innerHTML = `<div class="rt-open">${esc(g.opening)}</div><div class="muted small">${new Date(g.endTime * 1000).toLocaleDateString()} · ${esc(g.timeClass)}${g.practice ? '' : ` · <a href="${esc(g.url)}" target="_blank" rel="noopener">chess.com ↗</a>`}</div>`;
     $('rAccs').innerHTML = ['white', 'black'].map((c) => `<div class="acc ${c}"><div class="acc-name">${esc(g[c].name)}</div><div class="acc-val">${(c === 'white' ? g.accuracyW : g.accuracyB).toFixed(1)}</div><div class="muted small">accuracy</div></div>`).join('');
     renderMoves();
     renderSummary();
@@ -99,7 +99,7 @@ export function createReview({ getEngine, askAI, aiSettings }) {
     $('rMoves').querySelector('.mv.cur')?.scrollIntoView({ block: 'nearest' });
     renderGraph();
     if (i < 0) {
-      $('coach').innerHTML = `<div class="coach-head"><span class="coach-avatar">♞</span><div><b>Let's review this game.</b><div class="muted small">Use ← → or the buttons. Coloured dots on the graph mark big moments.</div></div></div>`;
+      $('coach').innerHTML = `<div class="coach-head"><span class="coach-avatar">♞</span><div><b>Let's review this game.</b><div class="muted small">Use ← → or the buttons. Coloured dots on the graph mark big moments.</div></div></div>${g.note ? `<div class="coach-body"><p>${esc(g.note)}</p></div>` : ''}`;
       return;
     }
     const ex = explainMove(g, i);

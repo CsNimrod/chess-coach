@@ -1,5 +1,5 @@
 import { Chess, esc, md, uciToObj, winPct } from './chessutil.js';
-import { Board } from './board.js';
+import { Board, soundSettings, setSound } from './board.js';
 import { Engine, sharedEngine, poolSize } from './engine.js';
 import { fetchGames, analyzeGame, classifyGame, aggregate, worstMistakes, quickFindings, buildPrompt, Cancelled, TACTICAL, CLASSES, isError } from './analysis.js';
 import { askAI, PROVIDERS } from './ai.js';
@@ -14,6 +14,7 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 // ---------------- settings ----------------
 const settings = Object.assign({ provider: 'gemini', keys: {}, models: {}, depth: 16, username: '' }, load('cc_settings', {}));
 const saveSettings = () => save('cc_settings', settings);
+document.documentElement.dataset.board = settings.boardTheme || 'brown';
 
 // ---------------- tabs ----------------
 document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -412,6 +413,7 @@ const drill = (() => {
     $('explorerBox').hidden = !isReal;
     $('realFeedback').hidden = true;
     $('drillLine').disabled = isReal;
+    $('realFinish').hidden = !isReal;
     if (!isReal) return;
     const p = realParams();
     $('realBand').textContent = `Your rating ≈ ${p.est} on Lichess, so the bot plays what Lichess players rated ${p.label} play (${$('realSpeeds').selectedOptions[0].text}). Your ${group().name} lines are used as your repertoire.`;
@@ -446,7 +448,7 @@ const drill = (() => {
 
   function realStart() {
     const g = group();
-    st = { real: true, g, side: $('drillSide').value, chess: new Chess(), hist: [], errors: 0, plyErrors: 0, outAt: null, done: false, maxPly: 24, feedback: [], busy: false };
+    st = { real: true, g, side: $('drillSide').value, chess: new Chess(), hist: [], errors: 0, outAt: null, youLeftAt: null, openingName: null, done: false, maxPly: 24, feedback: [] };
     xData = null;
     board.setOrientation(st.side);
     board.setPosition(st.chess.fen());
@@ -467,13 +469,14 @@ const drill = (() => {
     catch (e) { if (st === my) { status(e.message, 'bad'); if (e.code === 'auth') renderRealBox(); } return; }
     if (st !== my) return;
     xData = d;
+    if (d.opening?.name) my.openingName = d.opening.name;
     renderExplorer(d);
     if (!userTurn()) {
       if (d.total < 8 || !d.moves.length) return realComplete(`Players at your level almost never reach this position (${d.total} games), so the opening phase is over.`);
       board.movable = null;
       status('Opponent is thinking…');
       await sleep(500);
-      if (st !== my) return;
+      if (st !== my || my.done) return;
       const pick = pickMove(d, $('realPick').value);
       const book = bookNext();
       const mv = my.chess.move(pick.san);
@@ -482,81 +485,88 @@ const drill = (() => {
       renderMoves();
       const offBook = book.length && !book.some((b) => norm(b) === norm(mv.san));
       if (offBook && my.outAt == null) my.outAt = my.hist.length;
-      feedback(`<span>🧑 Opponent played <b>${esc(mv.san)}</b>, chosen by ${pick.pct.toFixed(0)}% of players at your level.${offBook ? ' <b class="c-mistake">⚠ Your lines don\'t cover this. You\'re on your own!</b>' : ''}</span>`);
+      feedback(`<span>🧑 Opponent played <b>${esc(mv.san)}</b>, chosen by ${pick.pct.toFixed(0)}% of players at your level.${offBook ? ' <b class="c-mistake">⚠ Your lines don\'t cover this.</b>' : ''}</span>`);
       return realTurn();
     }
     board.movable = my.side;
-    const book = bookNext();
-    status(book.length ? 'Your move: play your repertoire.' : 'Your move: you\'re past your prepared lines, so find a good move.');
+    status('Your move.');
   }
 
+  // During a real-opponent game nothing interrupts you: any move is allowed,
+  // and grading happens only when you analyze the finished game.
   function realOnMove(from, to) {
-    if (!st || st.done || st.busy || !userTurn()) return false;
+    if (!st || st.done || !userTurn()) return false;
     const r = tryMove(st.chess.fen(), from, to);
     if (!r) return false;
     const book = bookNext();
-    if (book.length && !book.some((b) => norm(b) === norm(r.m.san))) {
-      st.errors++; st.plyErrors++;
-      board.mark(from, 'wrong', 500); board.mark(to, 'wrong', 500);
-      status(`✗ ${r.m.san} isn't in your ${st.g.name} lines. Try again.`, 'bad');
-      if (st.plyErrors >= 2) { const m = new Chess(st.chess.fen()).move(book[0]); board.setArrows([{ from: m.from, to: m.to, color: 'blue' }]); }
-      return false;
-    }
-    st.plyErrors = 0;
-    const fenBefore = st.chess.fen();
+    if (book.length && !book.some((b) => norm(b) === norm(r.m.san)) && st.youLeftAt == null) st.youLeftAt = st.hist.length + 1;
     st.chess.move(r.m.san);
     st.hist.push(r.m.san);
-    const fenAfter = st.chess.fen();
-    board.setPosition(fenAfter, { lastMove: r.m });
+    board.setPosition(st.chess.fen(), { lastMove: r.m });
     renderMoves();
-    const xm = xData?.moves.find((m) => m.san === r.m.san);
-    const pop = xm ? `${xm.pct.toFixed(0)}% of players play this here, scoring ${scoreFor(xm, st.side).toFixed(0)}%.` : 'Players at your level rarely play this.';
-    if (book.length) {
-      board.mark(to, 'right', 400);
-      status(`✓ ${r.m.san}: in your prep`, 'ok');
-      feedback(`<span class="cls-icon sm" style="background:${CLASSES.book.color}">${CLASSES.book.icon}</span><span><b>${esc(r.m.san)}</b> is in your prep. ${pop}</span>`);
-      setTimeout(realTurn, 300);
-      return true;
-    }
-    // Out of book: let Stockfish grade the move.
-    if (st.outAt == null) st.outAt = st.hist.length;
-    const my = st;
-    my.busy = true;
-    status('Checking your move with Stockfish…');
-    const eng = sharedEngine();
-    Promise.all([eng.evaluate(fenBefore, { depth: 14 }), eng.evaluate(fenAfter, { depth: 14 })]).then(([b, a]) => {
-      my.busy = false;
-      if (st !== my) return;
-      const uci = r.m.from + r.m.to + (r.m.promotion || '');
-      const wB = winPct(toCp(b)), wA = winPct(-toCp(a));
-      const isBest = b.best && b.best.slice(0, 4) === uci.slice(0, 4);
-      const drop = isBest ? 0 : Math.max(0, wB - wA);
-      const cls = isBest ? 'best' : drop >= 15 ? 'blunder' : drop >= 10 ? 'mistake' : drop >= 5 ? 'inaccuracy' : drop < 2 ? 'excellent' : 'good';
-      if (isError(cls) || cls === 'inaccuracy') my.errors++;
-      let bestSan = null;
-      if (!isBest && b.best) try { bestSan = new Chess(fenBefore).move(uciToObj(b.best)).san; } catch {}
-      const C = CLASSES[cls];
-      status(`${r.m.san}: ${C.label}`, isError(cls) ? 'bad' : cls === 'inaccuracy' ? '' : 'ok');
-      feedback(`<span class="cls-icon sm" style="background:${C.color}">${C.icon}</span><span><b>${esc(r.m.san)}</b> is ${C.label.toLowerCase()}. ${pop}${bestSan && cls !== 'excellent' ? ` Stockfish prefers <b>${esc(bestSan)}</b>.` : ''}</span>`);
-      if (bestSan && (isError(cls) || cls === 'inaccuracy')) board.setArrows([{ from: b.best.slice(0, 2), to: b.best.slice(2, 4), color: 'green' }]);
-      realTurn();
-    });
+    setTimeout(realTurn, 250);
     return true;
   }
 
   function realComplete(msg) {
     st.done = true;
     board.movable = null;
-    const out = st.outAt != null ? ` You left your prepared lines at move ${Math.ceil(st.outAt / 2)}.` : ' You stayed in your prep the whole way!';
-    status(`${msg}${out} ${st.errors ? `${st.errors} slip${st.errors > 1 ? 's' : ''}.` : 'No mistakes!'}`, st.errors ? '' : 'ok');
+    const my = st;
     const hist = st.hist.slice(), side = st.side, gname = st.g.name;
-    feedback(`<span>💾 Want to drill this exact line later? <button id="realSave">Save to My lines</button></span>`);
+    status(msg, 'ok');
+    feedback(`<span>🏁 Game over. <button id="realAnalyze" class="primary">📊 Analyze game</button> <button id="realSave">💾 Save line</button></span>`);
     $('realSave').onclick = () => {
       custom.push({ name: `${gname}: ${hist.slice(0, 8).join(' ')}…`, moves: hist.join(' '), san: hist, side });
       save('cc_custom_lines', custom.map(({ san: _s, ...l }) => l));
       $('realSave').replaceWith(Object.assign(document.createElement('b'), { textContent: 'Saved ✓', className: 'ok' }));
       const cur = sel.value; fillGroups(); sel.value = cur;
     };
+    $('realAnalyze').onclick = () => analyzeReal(my);
+  }
+
+  let reviewEngine = null;
+  async function analyzeReal(game0) {
+    const btn = $('realAnalyze');
+    if (btn) btn.disabled = true;
+    const p = realParams();
+    const c = new Chess();
+    const fens = [c.fen()];
+    const moves = game0.hist.map((san) => {
+      const color = c.turn(), moveNo = +c.fen().split(' ')[5];
+      const mv = c.move(san);
+      fens.push(c.fen());
+      return { san: mv.san, uci: mv.from + mv.to + (mv.promotion || ''), color, moveNo, clock: null };
+    });
+    const me = { name: settings.username || 'You', rating: +$('realRating').value || '' };
+    const opp = { name: `Lichess ${p.label} players`, rating: p.label };
+    const moveOf = (ply) => `move ${Math.ceil(ply / 2)}`;
+    const notes = [];
+    if (game0.youLeftAt != null) notes.push(`You left your ${game0.g.name} prep on ${moveOf(game0.youLeftAt)}.`);
+    if (game0.outAt != null) notes.push(`Your opponent left your prep on ${moveOf(game0.outAt)}.`);
+    if (!notes.length) notes.push('You stayed in your prep the whole way.');
+    const game = {
+      url: 'practice:' + game0.side + ':' + game0.hist.join(' '), practice: true, note: notes.join(' '),
+      endTime: Date.now() / 1000, timeClass: 'practice vs ' + p.label, timeControl: '', base: null,
+      userColor: game0.side, me, opp,
+      white: game0.side === 'w' ? me : opp, black: game0.side === 'w' ? opp : me,
+      result: 'draw', opening: game0.openingName || game0.g.name, family: game0.g.name, fens, moves,
+    };
+    const total = fens.length;
+    let done = 0;
+    status(`Analyzing with Stockfish… 0/${total}`);
+    try {
+      reviewEngine ??= new Engine({ multipv: 2 });
+      await reviewEngine.ready;
+      await analyzeGame(game, reviewEngine, settings.depth, (k) => { done += k; status(`Analyzing with Stockfish… ${done}/${total}`); }, () => false);
+      classifyGame(game);
+      status('Analysis ready.', 'ok');
+      review.open(game);
+      showTab('review');
+      window.scrollTo(0, 0);
+    } catch (e) {
+      status('Analysis failed: ' + e.message, 'bad');
+      if (btn) btn.disabled = false;
+    }
   }
 
   $('realRating').value = settings.rating || 1200;
@@ -566,6 +576,12 @@ const drill = (() => {
 
   $('drillStart').onclick = () => start(st && !st.real && $('drillLine').value !== 'auto' ? st.li : undefined);
   $('drillNext').onclick = () => { $('drillLine').value = 'auto'; start(); };
+  $('realFinish').onclick = () => {
+    if (!st?.real || !st.hist.length) return;
+    const my = st;
+    if (!my.done) realComplete('Game ended.');
+    analyzeReal(my);
+  };
   $('drillHint').onclick = async () => {
     if (!st || st.done || !userTurn()) return;
     st.errors++;
@@ -610,6 +626,10 @@ const drill = (() => {
   prov.onchange = () => { settings.provider = prov.value; saveSettings(); sync(); };
   $('aiKey').oninput = () => { settings.keys[settings.provider] = $('aiKey').value.trim(); saveSettings(); };
   $('aiModel').oninput = () => { settings.models[settings.provider] = $('aiModel').value.trim(); saveSettings(); };
+  $('boardTheme').value = settings.boardTheme || 'brown';
+  $('boardTheme').onchange = () => { settings.boardTheme = $('boardTheme').value; saveSettings(); document.documentElement.dataset.board = settings.boardTheme; };
+  $('soundOn').checked = soundSettings.on;
+  $('soundOn').onchange = () => setSound($('soundOn').checked);
   $('depth').value = settings.depth;
   $('depth').onchange = () => { settings.depth = Math.max(6, Math.min(24, +$('depth').value || 16)); $('depth').value = settings.depth; saveSettings(); };
   $('cores').textContent = poolSize();

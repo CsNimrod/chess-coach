@@ -9,14 +9,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.cburnett.css">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=7">
   <!-- Bump v= on every release so browsers never mix old and new files (GitHub Pages caches for 10 min). -->
   <script type="importmap">
   { "imports": {
-      "./app.js": "./app.js?v=5", "./ai.js": "./ai.js?v=5", "./analysis.js": "./analysis.js?v=5",
-      "./board.js": "./board.js?v=5", "./chessutil.js": "./chessutil.js?v=5", "./engine.js": "./engine.js?v=5",
-      "./explain.js": "./explain.js?v=5", "./explorer.js": "./explorer.js?v=5", "./openings.js": "./openings.js?v=5",
-      "./review.js": "./review.js?v=5"
+      "./app.js": "./app.js?v=7", "./ai.js": "./ai.js?v=7", "./analysis.js": "./analysis.js?v=7",
+      "./board.js": "./board.js?v=7", "./chessutil.js": "./chessutil.js?v=7", "./engine.js": "./engine.js?v=7",
+      "./explain.js": "./explain.js?v=7", "./explorer.js": "./explorer.js?v=7", "./openings.js": "./openings.js?v=7",
+      "./review.js": "./review.js?v=7"
   } }
   </script>
 </head>
@@ -177,6 +177,7 @@
           <button id="drillStart" class="primary">Restart</button>
           <button id="drillHint">Hint</button>
           <button id="drillNext">Next line</button>
+          <button id="realFinish" hidden>🏁 Finish &amp; analyze</button>
         </div>
         <div id="drillStatus" class="status"></div>
         <div id="realFeedback" class="info small" hidden></div>
@@ -211,6 +212,15 @@
       <p id="aiKeyHelp" class="muted small"></p>
       <label>Model<input id="aiModel"></label>
       <p class="muted small">Your key is stored only in this browser (localStorage) and sent only to the provider you pick.</p>
+      <h3>Board</h3>
+      <div class="row">
+        <label>Board colours<select id="boardTheme">
+          <option value="brown">Brown (wood)</option><option value="green">Green</option>
+          <option value="blue">Blue</option><option value="slate">Slate</option>
+        </select></label>
+        <label class="check"><input id="soundOn" type="checkbox"> Move sounds</label>
+      </div>
+      <p class="muted small">Right-click a square to circle it, or right-click and drag to draw an arrow. Shift = red, Ctrl = blue, Alt = yellow. Left-click clears them.</p>
       <h3>Stockfish</h3>
       <label>Search depth <input id="depth" type="number" min="6" max="24" value="16"></label>
       <p class="muted small">Higher = more accurate but slower. 14–18 is a good range. Uses Stockfish 18 (NNUE), <span id="cores"></span> engines in parallel. The first run downloads about 7 MB.</p>
