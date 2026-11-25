@@ -5,6 +5,7 @@ import { fetchGames, analyzeGame, classifyGame, aggregate, worstMistakes, quickF
 import { askAI, PROVIDERS } from './ai.js';
 import { OPENINGS, lineKey, parseMoves } from './openings.js';
 import { createReview } from './review.js';
+import { lichessToken, connectLichess, finishLichessLogin, disconnectLichess, bandsFor, explore, pickMove } from './explorer.js';
 
 const $ = (id) => document.getElementById(id);
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
@@ -115,6 +116,7 @@ function renderResults() {
     card(s.avgRating || '–', 'average rating'),
   ].join('');
 
+  drill.setRating(s.avgRating);
   const f = quickFindings(s);
   $('findings').innerHTML = f.length ? f.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, '')}</li>`).join('') : '<li>Not enough mistakes to find patterns. Nice!</li>';
 
@@ -306,6 +308,8 @@ const drill = (() => {
   }
 
   function start(li) {
+    renderRealBox();
+    if ($('drillMode').value === 'real') return realStart();
     const g = group();
     li = li ?? pickLine();
     const line = g.lines[li];
@@ -339,6 +343,7 @@ const drill = (() => {
   }
   const norm = (s) => s.replace(/[+#!?]/g, '');
   function onMove(from, to) {
+    if (st?.real) return realOnMove(from, to);
     if (!st || st.done || !userTurn()) return false;
     const r = tryMove(st.chess.fen(), from, to);
     if (!r) return false;
@@ -373,6 +378,11 @@ const drill = (() => {
     renderMastery();
   }
   function renderMoves() {
+    if (st.real) {
+      const n0 = 1;
+      $('drillMoves').innerHTML = st.hist.map((m, i) => `${i % 2 === 0 ? `<span class="n">${n0 + i / 2}.</span>` : ''}<span class="m ${i === st.hist.length - 1 ? 'cur' : ''}">${esc(m)}</span>`).join('') || '<span class="muted small">No moves yet</span>';
+      return;
+    }
     const san = st.line.san;
     $('drillMoves').innerHTML = san.map((m, i) => {
       const num = i % 2 === 0 ? `<span class="n">${i / 2 + 1}.</span>` : '';
@@ -388,9 +398,183 @@ const drill = (() => {
       return `<div class="mastery"><span>${esc(l.name)}</span><span class="dots" title="clean runs in a row">${'●'.repeat(n)}${'○'.repeat(5 - n)}</span><span class="muted">${s.clean}/${s.attempts}</span></div>`;
     }).join('') + '<p class="muted small">Mastery counts Test-mode runs. 5 clean runs in a row = learned.</p>';
   }
-  $('drillStart').onclick = () => start(st && $('drillLine').value !== 'auto' ? st.li : undefined);
+  // ------------------------------------------------------------------
+  // Real-opponent mode: the bot plays what Lichess players at your rating play.
+  // ------------------------------------------------------------------
+  let xData = null; // explorer data for the current position
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const realParams = () => ({ ...bandsFor($('realRating').value), speeds: $('realSpeeds').value });
+  const toCp = (r) => (r.mate != null ? (r.mate > 0 ? 10000 - r.mate * 10 : -10000 - r.mate * 10) : r.cp);
+
+  function renderRealBox() {
+    const isReal = $('drillMode').value === 'real';
+    $('realBox').hidden = !isReal;
+    $('explorerBox').hidden = !isReal;
+    $('realFeedback').hidden = true;
+    $('drillLine').disabled = isReal;
+    if (!isReal) return;
+    const p = realParams();
+    $('realBand').textContent = `Your rating ≈ ${p.est} on Lichess, so the bot plays what Lichess players rated ${p.label} play (${$('realSpeeds').selectedOptions[0].text}). Your ${group().name} lines are used as your repertoire.`;
+    $('lichessConn').innerHTML = lichessToken()
+      ? `<div class="conn"><span><span class="dot"></span>Connected to the Lichess games database</span><button id="lxOut">Disconnect</button></div>`
+      : `<div class="conn"><span>This uses millions of real games from Lichess. Log in with a free Lichess account to use it (read-only, no permissions).</span><button id="lxIn" class="primary">Connect Lichess</button></div>`;
+    $('lxIn')?.addEventListener('click', () => { sessionStorage.setItem('cc_after_login', 'real'); connectLichess(); });
+    $('lxOut')?.addEventListener('click', async () => { await disconnectLichess(); start(); });
+  }
+
+  function bookNext() {
+    const lines = st.g.lines.filter((l) => !l.side || l.side === st.side).map((l) => l.san);
+    const next = new Set();
+    for (const s of lines) if (s.length > st.hist.length && st.hist.every((m, i) => norm(m) === norm(s[i]))) next.add(s[st.hist.length]);
+    return [...next];
+  }
+  function feedback(html) {
+    st.feedback.unshift(html);
+    $('realFeedback').hidden = false;
+    $('realFeedback').innerHTML = st.feedback.slice(0, 4).map((h, i) => `<div class="fb" style="opacity:${1 - i * 0.22}">${h}</div>`).join('');
+  }
+  function renderExplorer(d) {
+    $('explorerTotal').textContent = `(${d.total.toLocaleString()} games)`;
+    $('explorerOpening').textContent = d.opening ? `${d.opening.eco} · ${d.opening.name}` : '';
+    $('explorerMoves').innerHTML = d.moves.slice(0, 8).map((m) => {
+      const w = (100 * m.white) / m.games, dr = (100 * m.draws) / m.games, b = Math.max(0, 100 - w - dr);
+      const seg = (cls, v) => `<span class="${cls}" style="width:${v}%">${v >= 14 ? v.toFixed(0) + '%' : ''}</span>`;
+      return `<div class="xrow"><b>${esc(m.san)}</b><span>${m.pct.toFixed(0)}%</span><div class="wdl">${seg('w', w)}${seg('d', dr)}${seg('b', b)}</div></div>`;
+    }).join('') || '<p class="muted small">No games in this position.</p>';
+  }
+  const scoreFor = (m, side) => (100 * ((side === 'w' ? m.white : m.black) + m.draws / 2)) / m.games;
+
+  function realStart() {
+    const g = group();
+    st = { real: true, g, side: $('drillSide').value, chess: new Chess(), hist: [], errors: 0, plyErrors: 0, outAt: null, done: false, maxPly: 24, feedback: [], busy: false };
+    xData = null;
+    board.setOrientation(st.side);
+    board.setPosition(st.chess.fen());
+    board.movable = null;
+    renderMoves();
+    $('explorerMoves').innerHTML = '';
+    if (!lichessToken()) { status('Connect Lichess above to start.'); return; }
+    status(`Playing ${g.name} vs real opponents. Loading…`);
+    realTurn();
+  }
+
+  async function realTurn() {
+    const my = st;
+    if (my.done) return;
+    if (my.hist.length >= my.maxPly) return realComplete('You got through the opening.');
+    let d;
+    try { d = await explore(my.chess.fen(), realParams()); }
+    catch (e) { if (st === my) { status(e.message, 'bad'); if (e.code === 'auth') renderRealBox(); } return; }
+    if (st !== my) return;
+    xData = d;
+    renderExplorer(d);
+    if (!userTurn()) {
+      if (d.total < 8 || !d.moves.length) return realComplete(`Players at your level almost never reach this position (${d.total} games), so the opening phase is over.`);
+      board.movable = null;
+      status('Opponent is thinking…');
+      await sleep(500);
+      if (st !== my) return;
+      const pick = pickMove(d, $('realPick').value);
+      const book = bookNext();
+      const mv = my.chess.move(pick.san);
+      my.hist.push(mv.san);
+      board.setPosition(my.chess.fen(), { lastMove: mv });
+      renderMoves();
+      const offBook = book.length && !book.some((b) => norm(b) === norm(mv.san));
+      if (offBook && my.outAt == null) my.outAt = my.hist.length;
+      feedback(`<span>🧑 Opponent played <b>${esc(mv.san)}</b>, chosen by ${pick.pct.toFixed(0)}% of players at your level.${offBook ? ' <b class="c-mistake">⚠ Your lines don\'t cover this. You\'re on your own!</b>' : ''}</span>`);
+      return realTurn();
+    }
+    board.movable = my.side;
+    const book = bookNext();
+    status(book.length ? 'Your move: play your repertoire.' : 'Your move: you\'re past your prepared lines, so find a good move.');
+  }
+
+  function realOnMove(from, to) {
+    if (!st || st.done || st.busy || !userTurn()) return false;
+    const r = tryMove(st.chess.fen(), from, to);
+    if (!r) return false;
+    const book = bookNext();
+    if (book.length && !book.some((b) => norm(b) === norm(r.m.san))) {
+      st.errors++; st.plyErrors++;
+      board.mark(from, 'wrong', 500); board.mark(to, 'wrong', 500);
+      status(`✗ ${r.m.san} isn't in your ${st.g.name} lines. Try again.`, 'bad');
+      if (st.plyErrors >= 2) { const m = new Chess(st.chess.fen()).move(book[0]); board.setArrows([{ from: m.from, to: m.to, color: 'blue' }]); }
+      return false;
+    }
+    st.plyErrors = 0;
+    const fenBefore = st.chess.fen();
+    st.chess.move(r.m.san);
+    st.hist.push(r.m.san);
+    const fenAfter = st.chess.fen();
+    board.setPosition(fenAfter, { lastMove: r.m });
+    renderMoves();
+    const xm = xData?.moves.find((m) => m.san === r.m.san);
+    const pop = xm ? `${xm.pct.toFixed(0)}% of players play this here, scoring ${scoreFor(xm, st.side).toFixed(0)}%.` : 'Players at your level rarely play this.';
+    if (book.length) {
+      board.mark(to, 'right', 400);
+      status(`✓ ${r.m.san}: in your prep`, 'ok');
+      feedback(`<span class="cls-icon sm" style="background:${CLASSES.book.color}">${CLASSES.book.icon}</span><span><b>${esc(r.m.san)}</b> is in your prep. ${pop}</span>`);
+      setTimeout(realTurn, 300);
+      return true;
+    }
+    // Out of book: let Stockfish grade the move.
+    if (st.outAt == null) st.outAt = st.hist.length;
+    const my = st;
+    my.busy = true;
+    status('Checking your move with Stockfish…');
+    const eng = sharedEngine();
+    Promise.all([eng.evaluate(fenBefore, { depth: 14 }), eng.evaluate(fenAfter, { depth: 14 })]).then(([b, a]) => {
+      my.busy = false;
+      if (st !== my) return;
+      const uci = r.m.from + r.m.to + (r.m.promotion || '');
+      const wB = winPct(toCp(b)), wA = winPct(-toCp(a));
+      const isBest = b.best && b.best.slice(0, 4) === uci.slice(0, 4);
+      const drop = isBest ? 0 : Math.max(0, wB - wA);
+      const cls = isBest ? 'best' : drop >= 15 ? 'blunder' : drop >= 10 ? 'mistake' : drop >= 5 ? 'inaccuracy' : drop < 2 ? 'excellent' : 'good';
+      if (isError(cls) || cls === 'inaccuracy') my.errors++;
+      let bestSan = null;
+      if (!isBest && b.best) try { bestSan = new Chess(fenBefore).move(uciToObj(b.best)).san; } catch {}
+      const C = CLASSES[cls];
+      status(`${r.m.san}: ${C.label}`, isError(cls) ? 'bad' : cls === 'inaccuracy' ? '' : 'ok');
+      feedback(`<span class="cls-icon sm" style="background:${C.color}">${C.icon}</span><span><b>${esc(r.m.san)}</b> is ${C.label.toLowerCase()}. ${pop}${bestSan && cls !== 'excellent' ? ` Stockfish prefers <b>${esc(bestSan)}</b>.` : ''}</span>`);
+      if (bestSan && (isError(cls) || cls === 'inaccuracy')) board.setArrows([{ from: b.best.slice(0, 2), to: b.best.slice(2, 4), color: 'green' }]);
+      realTurn();
+    });
+    return true;
+  }
+
+  function realComplete(msg) {
+    st.done = true;
+    board.movable = null;
+    const out = st.outAt != null ? ` You left your prepared lines at move ${Math.ceil(st.outAt / 2)}.` : ' You stayed in your prep the whole way!';
+    status(`${msg}${out} ${st.errors ? `${st.errors} slip${st.errors > 1 ? 's' : ''}.` : 'No mistakes!'}`, st.errors ? '' : 'ok');
+    const hist = st.hist.slice(), side = st.side, gname = st.g.name;
+    feedback(`<span>💾 Want to drill this exact line later? <button id="realSave">Save to My lines</button></span>`);
+    $('realSave').onclick = () => {
+      custom.push({ name: `${gname}: ${hist.slice(0, 8).join(' ')}…`, moves: hist.join(' '), san: hist, side });
+      save('cc_custom_lines', custom.map(({ san: _s, ...l }) => l));
+      $('realSave').replaceWith(Object.assign(document.createElement('b'), { textContent: 'Saved ✓', className: 'ok' }));
+      const cur = sel.value; fillGroups(); sel.value = cur;
+    };
+  }
+
+  $('realRating').value = settings.rating || 1200;
+  $('realRating').onchange = () => { settings.rating = +$('realRating').value || 1200; settings.ratingByUser = true; saveSettings(); start(); };
+  $('realSpeeds').onchange = () => start();
+  $('realPick').onchange = () => renderRealBox();
+
+  $('drillStart').onclick = () => start(st && !st.real && $('drillLine').value !== 'auto' ? st.li : undefined);
   $('drillNext').onclick = () => { $('drillLine').value = 'auto'; start(); };
-  $('drillHint').onclick = () => { if (st && !st.done && userTurn()) { st.errors++; showArrow(); } };
+  $('drillHint').onclick = async () => {
+    if (!st || st.done || !userTurn()) return;
+    st.errors++;
+    if (!st.real) return showArrow();
+    const book = bookNext();
+    if (book.length) { const m = new Chess(st.chess.fen()).move(book[0]); board.setArrows([{ from: m.from, to: m.to, color: 'blue' }]); return; }
+    const b = await sharedEngine().evaluate(st.chess.fen(), { depth: 14 });
+    if (b.best) board.setArrows([{ from: b.best.slice(0, 2), to: b.best.slice(2, 4), color: 'blue' }]);
+  };
   $('customAdd').onclick = () => {
     const name = $('customName').value.trim() || 'My line';
     const arr = parseMoves($('customMoves').value);
@@ -404,7 +588,7 @@ const drill = (() => {
   };
 
   fillGroups(); fillLines(); start();
-  return { selectGroup };
+  return { selectGroup, enterReal: () => { $('drillMode').value = 'real'; start(); }, setRating: (r) => { if (!settings.ratingByUser && r) { $('realRating').value = r; settings.rating = r; saveSettings(); } } };
 })();
 
 // =====================================================================
@@ -436,6 +620,21 @@ const drill = (() => {
   };
   sync();
 })();
+
+// coming back from the Lichess login page?
+finishLichessLogin().then((justLoggedIn) => {
+  if (justLoggedIn || sessionStorage.getItem('cc_after_login')) {
+    sessionStorage.removeItem('cc_after_login');
+    showTab('openings');
+    drill.enterReal();
+  }
+}).catch((e) => {
+  sessionStorage.removeItem('cc_after_login');
+  showTab('openings');
+  drill.enterReal();
+  $('drillStatus').className = 'status bad';
+  $('drillStatus').textContent = e.message;
+});
 
 // restore last session
 if (games.length) {

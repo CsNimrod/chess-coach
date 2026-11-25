@@ -26,6 +26,7 @@ Click any analyzed game for a full review, similar to chess.com's:
   - **Groq**: free key at https://console.groq.com/keys
   - **Ollama**: fully local, no key, but needs a decent PC
 - **My mistakes**: your own blunders become puzzles. Find the move Stockfish wanted. Alternative moves that are just as good also count.
-- **Openings**: drill lines from the Italian, Ruy Lopez, Sicilian, French, Caro-Kann, Scandinavian, Queen's Gambit, London, King's Indian and 1.e4 e5. Learn mode shows arrows; Test mode is from memory and tracks mastery (5 clean runs in a row). "Auto" picks your weakest line. You can paste your own lines. The Openings table on the Analyze tab has **Drill** buttons for the openings you actually play.
+- **Openings**: drill lines from the Italian, Ruy Lopez, Sicilian, French, Caro-Kann, Scandinavian, Queen's Gambit, London, King's Indian and 1.e4 e5. Learn mode shows arrows; Test mode is from memory and tracks mastery (5 clean runs in a row). "Auto" picks your weakest line. You can paste your own lines.
+  - **vs Real opponents at my rating**: the bot plays the moves that real players at your rating actually play (from the Lichess opening database, weighted by popularity). Your moves are checked against your lines. Once you or the opponent leave them, Stockfish grades your moves and shows how popular each one is and how it scores. Needs a free Lichess account (one-click "Connect Lichess", read-only). Chess.com ratings are converted to Lichess ones roughly. The Openings table on the Analyze tab has **Drill** buttons for the openings you actually play.
 
 Everything (cached analysis, drill progress, API key) is saved in your browser's localStorage only.

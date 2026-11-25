@@ -142,7 +142,27 @@
         <label>Line<select id="drillLine"></select></label>
         <div class="row">
           <label>Play as<select id="drillSide"><option value="w">White</option><option value="b">Black</option></select></label>
-          <label>Mode<select id="drillMode"><option value="learn">Learn (show moves)</option><option value="test">Test (from memory)</option></select></label>
+          <label>Mode<select id="drillMode">
+            <option value="learn">Learn (show moves)</option>
+            <option value="test">Test (from memory)</option>
+            <option value="real">vs Real opponents at my rating</option>
+          </select></label>
+        </div>
+        <div id="realBox" class="realbox" hidden>
+          <div id="lichessConn"></div>
+          <div class="row">
+            <label>Your chess.com rating<input id="realRating" type="number" min="400" max="3200" step="50" value="1200"></label>
+            <label>Time control<select id="realSpeeds">
+              <option value="blitz,rapid">Blitz + Rapid</option>
+              <option value="bullet,blitz">Bullet + Blitz</option>
+              <option value="rapid,classical">Rapid + Classical</option>
+            </select></label>
+            <label>Opponent<select id="realPick">
+              <option value="weighted">Plays like a real player</option>
+              <option value="top">Always the most popular move</option>
+            </select></label>
+          </div>
+          <div id="realBand" class="muted small"></div>
         </div>
         <div class="row">
           <button id="drillStart" class="primary">Restart</button>
@@ -150,7 +170,13 @@
           <button id="drillNext">Next line</button>
         </div>
         <div id="drillStatus" class="status"></div>
+        <div id="realFeedback" class="info small" hidden></div>
         <div id="drillMoves" class="movelist"></div>
+        <details id="explorerBox" class="explorer" hidden>
+          <summary>What players at your level play here <span id="explorerTotal" class="muted small"></span></summary>
+          <div id="explorerOpening" class="muted small"></div>
+          <div id="explorerMoves"></div>
+        </details>
         <h4>Mastery</h4>
         <div id="drillMastery"></div>
         <details>
