@@ -3,49 +3,67 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Chess Coach</title>
+  <title>Chess Coach: game review, AI coaching and opening drills</title>
+  <meta name="description" content="Analyze your chess.com games with Stockfish, find your recurring mistakes, and drill openings.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♞</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.cburnett.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <div class="brand">♞ Chess Coach</div>
+  <div class="brand"><span class="logo">♞</span> Chess<span>Coach</span></div>
   <nav>
-    <button data-tab="analyze" class="active">Analyze</button>
-    <button data-tab="puzzles">My mistakes</button>
-    <button data-tab="openings">Openings</button>
-    <button data-tab="settings">Settings</button>
+    <button data-tab="analyze" class="active"><span>📊</span>Analyze</button>
+    <button data-tab="review"><span>🔍</span>Game Review</button>
+    <button data-tab="puzzles"><span>🧩</span>My Mistakes</button>
+    <button data-tab="openings"><span>📖</span>Openings</button>
+    <button data-tab="settings"><span>⚙️</span>Settings</button>
   </nav>
 </header>
 
 <main>
   <!-- ANALYZE -->
   <section id="tab-analyze" class="tab active">
-    <div class="card controls">
-      <label>Chess.com username<input id="username" placeholder="your username" autocomplete="off"></label>
-      <label>Games<input id="gameCount" type="number" min="1" max="200" value="15"></label>
-      <label>Time control
-        <select id="timeClass">
-          <option value="all">All</option><option value="rapid">Rapid</option><option value="blitz">Blitz</option>
-          <option value="bullet">Bullet</option><option value="daily">Daily</option>
-        </select>
-      </label>
-      <button id="analyzeBtn" class="primary">Fetch &amp; analyze</button>
-      <button id="cancelBtn" hidden>Stop</button>
-    </div>
-    <div id="progress" class="card" hidden>
-      <div class="bar"><div id="progressFill"></div></div>
-      <div id="progressText" class="muted"></div>
+    <div class="hero card">
+      <div class="hero-text">
+        <h1>Find the mistakes you keep making.</h1>
+        <p class="muted">Enter your chess.com username. Stockfish reviews your recent games move by move, and an AI coach sums up what's costing you points.</p>
+      </div>
+      <div class="controls">
+        <label class="grow">Chess.com username<input id="username" placeholder="your username" autocomplete="off"></label>
+        <label>Games<input id="gameCount" type="number" min="1" max="200" value="15"></label>
+        <label>Time control
+          <select id="timeClass">
+            <option value="all">All</option><option value="rapid">Rapid</option><option value="blitz">Blitz</option>
+            <option value="bullet">Bullet</option><option value="daily">Daily</option>
+          </select>
+        </label>
+        <button id="analyzeBtn" class="primary big">Analyze games</button>
+        <button id="cancelBtn" hidden>Stop</button>
+      </div>
+      <div id="progress" hidden>
+        <div class="bar"><div id="progressFill"></div></div>
+        <div id="progressText" class="muted small"></div>
+      </div>
     </div>
     <div id="error" class="card error" hidden></div>
 
     <div id="results" hidden>
       <div id="summary" class="stats"></div>
-      <div class="card">
-        <h3>What the numbers say</h3>
-        <ul id="findings" class="findings"></ul>
+      <div class="grid2">
+        <div class="card">
+          <h3>What the numbers say</h3>
+          <ul id="findings" class="findings"></ul>
+        </div>
+        <div class="card">
+          <h3>Your move quality</h3>
+          <div id="classChart"></div>
+        </div>
       </div>
-      <div class="card">
-        <div class="row between"><h3>AI coach</h3><button id="aiBtn" class="primary">Generate coaching report</button></div>
+      <div class="card ai-card">
+        <div class="row between"><h3>✦ AI coach</h3><button id="aiBtn" class="primary">Generate coaching report</button></div>
         <div id="aiOut" class="md muted">Uses the free AI you pick in Settings to find your most consistent weaknesses.</div>
       </div>
       <div class="grid2">
@@ -53,7 +71,36 @@
         <div class="card"><h3>Accuracy by phase</h3><div id="phaseTable"></div></div>
       </div>
       <div class="card"><h3>Your openings</h3><div id="openingTable"></div></div>
-      <div class="card"><h3>Games <span class="muted small">(click one to review)</span></h3><div id="gameList"></div></div>
+      <div class="card"><h3>Games <span class="muted small">(click one for a full Game Review)</span></h3><div id="gameList"></div></div>
+    </div>
+  </section>
+
+  <!-- GAME REVIEW -->
+  <section id="tab-review" class="tab">
+    <div id="reviewEmpty" class="card empty">Analyze your games first, then click a game to review it here.</div>
+    <div id="review" class="review" hidden>
+      <div class="evalbar" id="evalBar"><div class="evalfill" id="evalFill"></div><span id="evalNum"></span></div>
+      <div class="boardcol">
+        <div class="player" id="pTop"></div>
+        <div id="reviewBoard"></div>
+        <div class="player" id="pBottom"></div>
+      </div>
+      <div class="rpanel">
+        <div class="rpanel-head">
+          <div class="rp-title">🔍 Game Review</div>
+          <div id="rTitle"></div>
+          <div class="accs" id="rAccs"></div>
+        </div>
+        <div class="coach" id="coach"></div>
+        <svg id="graph" class="graph"></svg>
+        <div class="rmoves" id="rMoves"></div>
+        <div class="navbar">
+          <button id="rFirst" title="Start (Home)">⏮</button><button id="rPrev" title="Back (←)">◀</button>
+          <button id="rNext" class="primary" title="Next (→)">▶</button><button id="rLast" title="End (End)">⏭</button>
+          <button id="rNextErr">Next mistake</button>
+        </div>
+        <details class="sumbox" open><summary>Move summary</summary><div id="rSummary"></div></details>
+      </div>
     </div>
   </section>
 
@@ -62,8 +109,8 @@
     <div class="layout">
       <div><div id="puzzleBoard"></div></div>
       <div class="side card">
-        <h3>Fix your own mistakes</h3>
-        <p class="muted small">These positions come from your games, where you went wrong. Find the move Stockfish wanted.</p>
+        <h3>🧩 Fix your own mistakes</h3>
+        <p class="muted small">These positions come from your games, at the moment you went wrong. Find the move Stockfish wanted.</p>
         <div class="row">
           <select id="puzzleFilter">
             <option value="all">Mistakes + blunders</option>
@@ -77,7 +124,7 @@
         <div class="row">
           <button id="puzzleHint">Hint</button>
           <button id="puzzleReveal">Show answer</button>
-          <button id="puzzleNext" class="primary">Next</button>
+          <button id="puzzleNext" class="primary">Next puzzle</button>
         </div>
         <div id="puzzleScore" class="muted small"></div>
       </div>
@@ -89,7 +136,7 @@
     <div class="layout">
       <div><div id="drillBoard"></div></div>
       <div class="side card">
-        <h3>Opening drills</h3>
+        <h3>📖 Opening drills</h3>
         <label>Opening<select id="drillGroup"></select></label>
         <p id="drillDesc" class="muted small"></p>
         <label>Line<select id="drillLine"></select></label>
@@ -98,7 +145,7 @@
           <label>Mode<select id="drillMode"><option value="learn">Learn (show moves)</option><option value="test">Test (from memory)</option></select></label>
         </div>
         <div class="row">
-          <button id="drillStart" class="primary">Start</button>
+          <button id="drillStart" class="primary">Restart</button>
           <button id="drillHint">Hint</button>
           <button id="drillNext">Next line</button>
         </div>
@@ -123,7 +170,7 @@
   <!-- SETTINGS -->
   <section id="tab-settings" class="tab">
     <div class="card narrow">
-      <h3>AI coach</h3>
+      <h3>✦ AI coach</h3>
       <label>Provider<select id="aiProvider"></select></label>
       <label id="aiKeyRow">API key <input id="aiKey" type="password" placeholder="paste your free key" autocomplete="off"></label>
       <p id="aiKeyHelp" class="muted small"></p>
@@ -138,27 +185,7 @@
     </div>
   </section>
 </main>
-
-<!-- Game review modal -->
-<div id="viewer" class="modal" hidden>
-  <div class="modal-body">
-    <div class="row between"><h3 id="viewerTitle"></h3><button id="viewerClose">✕</button></div>
-    <div class="layout">
-      <div>
-        <div id="viewerBoard"></div>
-        <div class="row center">
-          <button id="vFirst">⏮</button><button id="vPrev">◀</button><button id="vNext">▶</button><button id="vLast">⏭</button>
-          <button id="vNextErr">Next mistake</button>
-        </div>
-      </div>
-      <div class="side">
-        <div id="viewerInfo" class="info"></div>
-        <div id="viewerMoves" class="movelist"></div>
-        <a id="viewerLink" target="_blank" rel="noopener" class="small">Open on chess.com</a>
-      </div>
-    </div>
-  </div>
-</div>
+<footer class="muted small">Analysis by Stockfish 18 · Games from the public chess.com API · Pieces: cburnett (lichess) · Runs entirely in your browser</footer>
 
 <script type="module" src="app.js"></script>
 </body>

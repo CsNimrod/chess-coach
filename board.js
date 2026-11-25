@@ -1,5 +1,5 @@
 // Minimal interactive chessboard: click or drag to move, arrows, highlights.
-const GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+const PNAME = { k: 'king', q: 'queen', r: 'rook', b: 'bishop', n: 'knight', p: 'pawn' };
 const FILES = 'abcdefgh';
 const NS = 'http://www.w3.org/2000/svg';
 const ARROW_COLORS = { green: '#3fb950', red: '#f85149', blue: '#58a6ff', yellow: '#e3b341' };
@@ -32,7 +32,7 @@ export class Board {
     this.lastMove = null;
     this.arrows = [];
     this.marks = {};
-    el.classList.add('board');
+    el.classList.add('board', 'cg-wrap');
     el.innerHTML = '';
     this.grid = document.createElement('div');
     this.grid.className = 'grid';
@@ -55,9 +55,11 @@ export class Board {
     this.selDests = [];
     this.arrows = [];
     this.marks = {};
+    this.badge = null;
     this.render();
   }
   setOrientation(o) { this.orientation = o; this.render(); }
+  setBadge(b) { this.badge = b; this.render(); }
   setArrows(list) { this.arrows = list || []; this._drawArrows(); }
   mark(sq, cls, ms = 600) {
     this.marks[sq] = cls; this.render();
@@ -89,10 +91,16 @@ export class Board {
         if (row === 7) d.insertAdjacentHTML('beforeend', `<span class="coord file">${FILES[f]}</span>`);
         const p = this.pieces[sq];
         if (p) {
-          const s = document.createElement('span');
-          s.className = 'piece ' + p.color;
-          s.textContent = GLYPH[p.type] + '︎';
+          const s = document.createElement('piece');
+          s.className = `${PNAME[p.type]} ${p.color === 'w' ? 'white' : 'black'}`;
           d.append(s);
+        }
+        if (this.badge && this.badge.sq === sq) {
+          const b = document.createElement('span');
+          b.className = 'badge';
+          b.style.background = this.badge.color;
+          b.textContent = this.badge.icon;
+          d.append(b);
         }
         g.append(d);
       }
@@ -137,7 +145,7 @@ export class Board {
     if (p && this.movable && p.color === this.movable && this.turn() === p.color) {
       e.preventDefault();
       this._select(sq);
-      const pieceEl = this.grid.querySelector(`[data-sq="${sq}"] .piece`);
+      const pieceEl = this.grid.querySelector(`[data-sq="${sq}"] piece`);
       this.drag = { from: sq, x: e.clientX, y: e.clientY, pieceEl, ghost: null };
       this.grid.setPointerCapture(e.pointerId);
     } else {
@@ -150,8 +158,14 @@ export class Board {
     if (!d.ghost && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4 && d.pieceEl) {
       d.ghost = d.pieceEl.cloneNode(true);
       d.ghost.classList.add('ghost');
-      d.ghost.style.fontSize = getComputedStyle(d.pieceEl).fontSize;
-      document.body.append(d.ghost);
+      const r = d.pieceEl.getBoundingClientRect();
+      d.ghost.style.width = r.width + 'px';
+      d.ghost.style.height = r.height + 'px';
+      // ghost lives in <body>, so wrap it to keep the piece-image CSS selector working
+      d.ghostWrap = document.createElement('div');
+      d.ghostWrap.className = 'cg-wrap ghost-wrap';
+      d.ghostWrap.append(d.ghost);
+      document.body.append(d.ghostWrap);
       d.pieceEl.style.opacity = '0.25';
     }
     if (d.ghost) { d.ghost.style.left = e.clientX + 'px'; d.ghost.style.top = e.clientY + 'px'; }
@@ -161,11 +175,11 @@ export class Board {
     if (!d) return;
     this.drag = null;
     const to = this._sqAt(e.clientX, e.clientY);
-    d.ghost?.remove();
+    d.ghostWrap?.remove();
     if (d.ghost && to && to !== d.from && this.selDests.includes(to)) this._try(d.from, to);
     else if (d.pieceEl) d.pieceEl.style.opacity = '';
   }
-  _cancelDrag() { if (this.drag) { this.drag.ghost?.remove(); this.drag = null; this.render(); } }
+  _cancelDrag() { if (this.drag) { this.drag.ghostWrap?.remove(); this.drag = null; this.render(); } }
   _try(from, to) {
     this.sel = null; this.selDests = [];
     const ok = this.onMove ? this.onMove(from, to) : false;

@@ -31,7 +31,8 @@ function workerUrl() {
 }
 
 export class Engine {
-  constructor() {
+  constructor({ multipv = 1 } = {}) {
+    this.multipv = multipv;
     this.listeners = new Set();
     this.queue = Promise.resolve();
     this.ready = this._init();
@@ -41,6 +42,7 @@ export class Engine {
     this.w.onmessage = (e) => { const line = String(e.data); for (const l of [...this.listeners]) l(line); };
     await this._waitFor('uci', (l) => l === 'uciok');
     this.send('setoption name Hash value 16');
+    if (this.multipv > 1) this.send('setoption name MultiPV value ' + this.multipv);
     await this._waitFor('isready', (l) => l === 'readyok');
     this.name = engineName.replace(/\s+/g, '');
   }
@@ -52,24 +54,25 @@ export class Engine {
       this.send(cmd);
     });
   }
-  // Returns score from the side-to-move's point of view: {cp, mate, best, pv}
+  // Returns score from the side-to-move's point of view:
+  // {cp, mate, best, pv, second: {cp, mate, pv} | null}
   evaluate(fen, { depth = 16, movetime = 2000 } = {}) {
     const job = async () => {
       await this.ready;
       return new Promise((res) => {
-        let last = { cp: 0, mate: null, pv: [] };
+        const lines = {};
         const f = (l) => {
           if (l.startsWith('info') && l.includes(' score ') && !l.includes('bound')) {
             const m = l.match(/score (cp|mate) (-?\d+)/);
             const mp = l.match(/ multipv (\d+)/);
             const pv = l.match(/ pv (.+)$/);
-            if (m && (!mp || mp[1] === '1')) {
-              last = { cp: m[1] === 'cp' ? +m[2] : null, mate: m[1] === 'mate' ? +m[2] : null, pv: pv ? pv[1].split(' ') : last.pv };
-            }
+            const k = mp ? +mp[1] : 1;
+            if (m && pv) lines[k] = { cp: m[1] === 'cp' ? +m[2] : null, mate: m[1] === 'mate' ? +m[2] : null, pv: pv[1].split(' ') };
           } else if (l.startsWith('bestmove')) {
             this.listeners.delete(f);
             const bm = l.split(' ')[1];
-            res({ ...last, best: !bm || bm === '(none)' ? null : bm });
+            const first = lines[1] || { cp: 0, mate: null, pv: [] };
+            res({ ...first, best: !bm || bm === '(none)' ? null : bm, second: lines[2] || null });
           }
         };
         this.listeners.add(f);

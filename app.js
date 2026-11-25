@@ -1,9 +1,10 @@
 import { Chess, esc, md, uciToObj, winPct } from './chessutil.js';
 import { Board } from './board.js';
 import { Engine, sharedEngine, poolSize } from './engine.js';
-import { fetchGames, analyzeGame, classifyGame, aggregate, worstMistakes, quickFindings, buildPrompt, Cancelled, TACTICAL } from './analysis.js';
+import { fetchGames, analyzeGame, classifyGame, aggregate, worstMistakes, quickFindings, buildPrompt, Cancelled, TACTICAL, CLASSES, isError } from './analysis.js';
 import { askAI, PROVIDERS } from './ai.js';
 import { OPENINGS, lineKey, parseMoves } from './openings.js';
+import { createReview } from './review.js';
 
 const $ = (id) => document.getElementById(id);
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
@@ -66,7 +67,7 @@ async function runAnalysis() {
     const t0 = Date.now();
     const n = Math.min(poolSize(), list.length);
     setProgress(0, `Loading Stockfish (${n} engine${n > 1 ? 's' : ''})…`);
-    for (let i = 0; i < n; i++) pool.push(new Engine());
+    for (let i = 0; i < n; i++) pool.push(new Engine({ multipv: 2 }));
     await Promise.all(pool.map((e) => e.ready));
     const tick = (k) => {
       done += k;
@@ -86,7 +87,7 @@ async function runAnalysis() {
     if (!results.length) throw new Error(cancelled ? 'Stopped before any game finished.' : 'Analysis failed.');
     results.sort((a, b) => b.endTime - a.endTime);
     games = results;
-    save('cc_last_games', games.map(({ userMoves, ...g }) => g));
+    save('cc_last_games', games.map(({ userMoves, analysis, ...g }) => g));
     setProgress(1, `Done: analyzed ${games.length} game${games.length > 1 ? 's' : ''}${cancelled ? ' (stopped early)' : ''}.`);
     renderResults();
   } catch (e) {
@@ -123,6 +124,14 @@ function renderResults() {
     ? tags.map(([t, c]) => `<div class="hbar"><span>${esc(t)}</span><div class="track"><div class="fill" style="width:${(100 * c) / max}%;background:${TACTICAL.includes(t) ? 'var(--blun)' : 'var(--mist)'}"></div></div><span>${c}</span></div>`).join('')
     : '<p class="muted">No mistakes or blunders found.</p>';
 
+  const order = ['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'inaccuracy', 'mistake', 'miss', 'blunder'];
+  const totalMoves = order.reduce((a, c) => a + (s.classes[c] || 0), 0) || 1;
+  const cmax = Math.max(1, ...order.map((c) => s.classes[c] || 0));
+  $('classChart').innerHTML = order.map((c) => {
+    const n = s.classes[c] || 0, C = CLASSES[c];
+    return `<div class="hbar"><span class="lbl"><span class="cls-icon sm" style="background:${C.color}">${C.icon}</span>${C.label}</span><div class="track"><div class="fill" style="width:${(100 * n) / cmax}%;background:${C.color}"></div></div><span title="${((100 * n) / totalMoves).toFixed(0)}% of your moves">${n}</span></div>`;
+  }).join('');
+
   $('phaseTable').innerHTML = `<table><tr><th>Phase</th><th>Accuracy</th><th>Mistakes + blunders</th><th>Per game</th></tr>${
     Object.entries(s.phase).map(([k, p]) => `<tr><td>${k}</td><td>${p.acc != null ? p.acc.toFixed(1) + '%' : '–'}</td><td>${p.errors}</td><td>${(p.errors / s.games).toFixed(1)}</td></tr>`).join('')}</table>
     <p class="muted small">Time trouble: ${s.timeTroubleErrors} of ${s.totalErrors} mistakes happened with under 10% of your clock left.
@@ -136,10 +145,10 @@ function renderResults() {
   $('openingTable').querySelectorAll('[data-drill]').forEach((b) => b.addEventListener('click', () => { showTab('openings'); drill.selectGroup(b.dataset.drill); }));
 
   $('gameList').innerHTML = `<table><tr><th>Date</th><th>Color</th><th>Opponent</th><th>Result</th><th>Opening</th><th>Accuracy</th><th>B / M / I</th></tr>${
-    games.map((g, idx) => `<tr class="click" data-g="${idx}"><td>${new Date(g.endTime * 1000).toLocaleDateString()}</td><td>${g.userColor === 'w' ? '⚪' : '⚫'}</td><td>${esc(g.opp.name)} (${g.opp.rating})</td>
+    games.map((g, idx) => `<tr class="click" data-g="${idx}" title="Open Game Review"><td>${new Date(g.endTime * 1000).toLocaleDateString()}</td><td>${g.userColor === 'w' ? '⚪' : '⚫'}</td><td>${esc(g.opp.name)} (${g.opp.rating})</td>
       <td><span class="pill ${g.result}">${g.result}</span></td><td>${esc(g.opening)}</td><td>${g.accuracy.toFixed(0)}%</td>
-      <td><span class="c-blunder">${g.counts.blunder}</span> / <span class="c-mistake">${g.counts.mistake}</span> / <span class="c-inaccuracy">${g.counts.inaccuracy}</span></td></tr>`).join('')}</table>`;
-  $('gameList').querySelectorAll('[data-g]').forEach((tr) => tr.addEventListener('click', () => viewer.open(games[+tr.dataset.g])));
+      <td><span class="c-blunder">${g.counts.blunder}</span> / <span class="c-mistake">${g.counts.mistake + g.counts.miss}</span> / <span class="c-inaccuracy">${g.counts.inaccuracy}</span></td></tr>`).join('')}</table>`;
+  $('gameList').querySelectorAll('[data-g]').forEach((tr) => tr.addEventListener('click', () => { review.open(games[+tr.dataset.g]); showTab('review'); window.scrollTo(0, 0); }));
   puzzles.rebuild();
 }
 
@@ -160,68 +169,13 @@ $('aiBtn').addEventListener('click', async () => {
 });
 
 // =====================================================================
-// GAME VIEWER
+// GAME REVIEW
 // =====================================================================
-const viewer = (() => {
-  let g = null, k = 0;
-  const board = new Board($('viewerBoard'));
-  const umAt = (i) => g.userMoves.find((m) => m.i === i);
-  function open(game) {
-    g = game; k = 0;
-    $('viewer').hidden = false;
-    board.setOrientation(g.userColor);
-    $('viewerTitle').textContent = `${g.me.name} vs ${g.opp.name} · ${g.opening} · ${g.result}`;
-    $('viewerLink').href = g.url;
-    const html = g.moves.map((m, i) => {
-      const u = m.color === g.userColor ? umAt(i) : null;
-      const cls = u && u.cls !== 'good' ? `c-${u.cls}` : '';
-      return `${m.color === 'w' ? `<span class="n">${m.moveNo}.</span>` : i === 0 ? `<span class="n">${m.moveNo}…</span>` : ''}<span class="m ${cls}" data-i="${i}">${esc(m.san)}</span>`;
-    }).join('');
-    $('viewerMoves').innerHTML = html;
-    $('viewerMoves').querySelectorAll('.m').forEach((el) => el.addEventListener('click', () => {
-      const i = +el.dataset.i; const u = umAt(i);
-      show(u && u.cls !== 'good' ? i : i + 1);
-    }));
-    const firstErr = g.userMoves.find((m) => m.cls === 'blunder' || m.cls === 'mistake');
-    show(0);
-    if (firstErr) $('viewerInfo').innerHTML += `<div class="small muted">Press “Next mistake” to jump to your errors.</div>`;
-  }
-  function show(nk) {
-    k = Math.max(0, Math.min(g.moves.length, nk));
-    const prev = g.moves[k - 1];
-    board.setPosition(g.fens[k], { lastMove: prev ? { from: prev.uci.slice(0, 2), to: prev.uci.slice(2, 4) } : null });
-    $('viewerMoves').querySelectorAll('.m').forEach((el) => el.classList.toggle('cur', +el.dataset.i === k - 1));
-    const cur = $('viewerMoves').querySelector('.m.cur'); cur?.scrollIntoView({ block: 'nearest' });
-    const e = g.evals[k];
-    let info = `<div>Eval: <b>${fmtEval(e)}</b> <span class="muted small">(White's view)</span></div>`;
-    const u = umAt(k);
-    if (u && u.cls !== 'good') {
-      board.setArrows([{ from: u.uci.slice(0, 2), to: u.uci.slice(2, 4), color: 'red' }, ...(u.best ? [{ from: u.best.slice(0, 2), to: u.best.slice(2, 4), color: 'green' }] : [])]);
-      info = `<div><b class="c-${u.cls}">${u.cls[0].toUpperCase() + u.cls.slice(1)}</b> coming up: you played <b>${esc(u.san)}</b> (red). Best was <b>${esc(u.bestSan || '?')}</b> (green).</div>
-        <div class="small muted">Your win chance went ${u.wB.toFixed(0)}% → ${u.wA.toFixed(0)}%${u.clock != null ? ` · ${Math.round(u.clock)}s on clock` : ''}</div>
-        ${u.tags.length ? `<div class="small">${u.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join(' ')}</div>` : ''}`;
-    }
-    $('viewerInfo').innerHTML = info;
-  }
-  function nextErr() {
-    const n = g.userMoves.find((m) => m.i > k && (m.cls === 'blunder' || m.cls === 'mistake')) || g.userMoves.find((m) => m.i > k && m.cls === 'inaccuracy');
-    if (n) show(n.i);
-  }
-  $('vFirst').onclick = () => show(0);
-  $('vPrev').onclick = () => show(k - 1);
-  $('vNext').onclick = () => show(k + 1);
-  $('vLast').onclick = () => show(g.moves.length);
-  $('vNextErr').onclick = nextErr;
-  $('viewerClose').onclick = () => { $('viewer').hidden = true; };
-  $('viewer').addEventListener('click', (e) => { if (e.target.id === 'viewer') $('viewer').hidden = true; });
-  document.addEventListener('keydown', (e) => {
-    if ($('viewer').hidden) return;
-    if (e.key === 'ArrowLeft') show(k - 1);
-    else if (e.key === 'ArrowRight') show(k + 1);
-    else if (e.key === 'Escape') $('viewer').hidden = true;
-  });
-  return { open };
-})();
+const review = createReview({
+  getEngine: sharedEngine,
+  askAI,
+  aiSettings: () => ({ provider: settings.provider, key: settings.keys[settings.provider], model: settings.models[settings.provider] }),
+});
 
 // =====================================================================
 // PUZZLES FROM YOUR MISTAKES
@@ -236,7 +190,7 @@ const puzzles = (() => {
     const f = $('puzzleFilter').value;
     list = [];
     for (const g of games) for (const m of g.userMoves || []) {
-      if (!(m.cls === 'blunder' || m.cls === 'mistake') || !m.best) continue;
+      if (!isError(m.cls) || !m.best) continue;
       if (f === 'blunder' && m.cls !== 'blunder') continue;
       if (f === 'tactic' && !m.tags.some((t) => TACTICAL.includes(t))) continue;
       list.push({ ...m, game: g });
