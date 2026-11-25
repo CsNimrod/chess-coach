@@ -1,5 +1,7 @@
 # Chess Coach
 
+**▶ Live: https://csnimrod.github.io/chess-coach/**
+
 Analyze your chess.com games with Stockfish, get an AI coach's take on your recurring mistakes, and drill openings. It's a static site that runs entirely in the browser: no backend, no build step.
 
 ## Run it locally
